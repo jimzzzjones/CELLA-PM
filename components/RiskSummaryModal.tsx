@@ -74,7 +74,7 @@ const RiskSummaryModal: React.FC<RiskSummaryModalProps> = ({ isOpen, onClose, pr
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
       <div 
-        className="bg-white rounded-2xl shadow-2xl w-[500px] max-h-[85vh] overflow-hidden flex flex-col relative animate-in zoom-in-95 duration-200"
+        className="bg-white rounded-2xl shadow-2xl w-[90vw] md:w-[500px] max-h-[85vh] overflow-hidden flex flex-col relative animate-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}

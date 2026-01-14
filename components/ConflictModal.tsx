@@ -16,7 +16,7 @@ const ConflictModal: React.FC<ConflictModalProps> = ({ isOpen, conflict, onCance
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl w-[480px] overflow-hidden transform transition-all scale-100 p-6 font-roboto">
+      <div className="bg-white rounded-2xl shadow-2xl w-[90vw] md:w-[480px] overflow-hidden transform transition-all scale-100 p-6 font-roboto">
         <div className="flex items-start gap-4">
           <div className="h-12 w-12 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
             <span className="material-symbols-outlined text-amber-600 text-2xl">warning</span>

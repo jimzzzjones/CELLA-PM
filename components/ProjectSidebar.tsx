@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Project, ScenarioType, UserRole, User, AIConfig } from '../types';
-import SettingsModal from './SettingsModal';
+import { Project, ScenarioType, UserRole } from '../types';
 
 interface ProjectSidebarProps {
   isOpen: boolean;
@@ -13,15 +12,6 @@ interface ProjectSidebarProps {
   onImportProject: (file: File) => void;
   onExportProject: (project: Project) => void;
   userRole: UserRole;
-  // User Management
-  users?: User[];
-  onAddUser?: (user: User) => void;
-  onUpdateUser?: (user: User) => void;
-  onDeleteUser?: (userId: string) => void;
-  currentUserId?: string;
-  // AI Config
-  aiConfig: AIConfig;
-  onUpdateAiConfig: (config: AIConfig) => void;
 }
 
 const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
@@ -35,21 +25,12 @@ const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
   onImportProject,
   onExportProject,
   userRole,
-  users = [],
-  onAddUser = () => {},
-  onUpdateUser = () => {},
-  onDeleteUser = () => {},
-  currentUserId = '',
-  aiConfig,
-  onUpdateAiConfig
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Define Permissions
-  // CHANGED: Project Managers can now manage projects (Create/Import/Rename) and access settings
   const canManageProjects = userRole === UserRole.Admin || userRole === UserRole.ProjectManager;
 
   // Reset editing state when drawer closes
@@ -95,20 +76,6 @@ const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
 
   return (
     <>
-      {/* Settings Modal */}
-      <SettingsModal 
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        users={users}
-        projects={projects}
-        onAddUser={onAddUser}
-        onUpdateUser={onUpdateUser}
-        onDeleteUser={onDeleteUser}
-        currentUserId={currentUserId}
-        aiConfig={aiConfig}
-        onUpdateAiConfig={onUpdateAiConfig}
-      />
-
       {/* Backdrop */}
       {isOpen && (
         <div 
@@ -246,15 +213,6 @@ const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                     新建项目
                     </button>
                 </div>
-                
-                {/* Settings Button */}
-                <button 
-                    onClick={() => setIsSettingsOpen(true)}
-                    className="w-full h-10 bg-white border border-[#E0E2E5] hover:border-indigo-300 hover:text-indigo-600 hover:shadow-md text-[#5F6368] text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
-                >
-                    <span className="material-symbols-outlined text-[20px]">settings</span>
-                    系统设置
-                </button>
              </>
            ) : (
              <div className="w-full text-center text-xs text-[#9AA0A6] py-2 flex items-center justify-center gap-1">

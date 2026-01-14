@@ -11,10 +11,12 @@ interface GanttChartProps {
   onTaskDelete?: (taskId: string) => void;
   viewMode: ViewMode;
   readOnly?: boolean;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onInsertTask?: (targetTaskId: string, position: 'before' | 'after') => void;
 }
 
 const HEADER_HEIGHT = 48;
-const SIDEBAR_WIDTH = 240;
 const ROW_HEIGHT = 56; // Defined row height for calculation
 
 type SortOrder = 'default' | 'asc' | 'desc';
@@ -37,16 +39,26 @@ const GanttChart: React.FC<GanttChartProps> = ({
     onTaskReorder,
     onTaskDelete,
     viewMode,
-    readOnly = false
+    readOnly = false,
+    onZoomIn,
+    onZoomOut,
+    onInsertTask
 }) => {
   // State
   const [sortOrder, setSortOrder] = useState<SortOrder>('default');
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // Container Panning State
+  // Responsive Sidebar Width
+  const [sidebarWidth, setSidebarWidth] = useState(240);
+
+  // Container Panning State (Mouse)
   const [isPanning, setIsPanning] = useState(false);
   const [panStartX, setPanStartX] = useState(0);
   const [panStartScrollLeft, setPanStartScrollLeft] = useState(0);
+
+  // Container Touch State (Mobile)
+  const [touchStartX, setTouchStartX] = useState<number>(0);
+  const [initialPinchDist, setInitialPinchDist] = useState<number | null>(null);
 
   // Task Dragging State
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -64,6 +76,23 @@ const GanttChart: React.FC<GanttChartProps> = ({
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Partial<Task>>({});
   const [deletingTask, setDeletingTask] = useState<Task | null>(null);
+
+  // Effect to handle window resize for sidebar width
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 768) {
+        setSidebarWidth(140); // Compact sidebar on mobile
+      } else {
+        setSidebarWidth(240); // Full sidebar on desktop
+      }
+    };
+
+    // Initial check
+    handleResize();
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Configuration for each view mode
   const VIEW_CONFIG = {
@@ -288,7 +317,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
     });
 
     return { dependencyLines: lines, relatedTaskIds: relatedIds };
-  }, [hoveredTaskId, sortedTasks, minDate, pixelsPerDay]);
+  }, [hoveredTaskId, sortedTasks, minDate, pixelsPerDay, sidebarWidth]); // Added sidebarWidth dependency
 
 
   // --- Sort Handler ---
@@ -300,7 +329,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
     });
   };
 
-  // --- Pan Handlers ---
+  // --- Pan Handlers (Mouse) ---
   const handlePanMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'BUTTON') return;
     if (!containerRef.current) return;
@@ -318,6 +347,65 @@ const GanttChart: React.FC<GanttChartProps> = ({
     const x = e.pageX;
     const walk = (x - panStartX); 
     containerRef.current.scrollLeft = panStartScrollLeft - walk;
+  };
+
+  // --- Touch Handlers (Mobile Panning & Zooming) ---
+  const handleTouchStart = (e: React.TouchEvent) => {
+    // Ignore input/button touches
+    if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'BUTTON') return;
+
+    if (e.touches.length === 1) {
+      // Pan
+      setIsPanning(true);
+      setTouchStartX(e.touches[0].pageX);
+      if (containerRef.current) {
+        setPanStartScrollLeft(containerRef.current.scrollLeft);
+      }
+    } else if (e.touches.length === 2) {
+      // Zoom
+      setIsPanning(false); // Stop panning
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      setInitialPinchDist(dist);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+     if (!containerRef.current) return;
+     
+     if (e.touches.length === 1 && isPanning) {
+        // Horizontal Pan
+        const currentX = e.touches[0].pageX;
+        const walk = currentX - touchStartX;
+        containerRef.current.scrollLeft = panStartScrollLeft - walk;
+        // NOTE: We do not preventDefault() here to allow vertical scrolling of the page
+     } else if (e.touches.length === 2 && initialPinchDist) {
+        // Pinch Zoom
+        if (e.cancelable) e.preventDefault(); // Prevent browser zoom
+        
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        
+        const ratio = dist / initialPinchDist;
+        
+        // Thresholds for triggering zoom
+        if (ratio > 1.3) {
+            onZoomIn?.();
+            setInitialPinchDist(dist); // Reset base distance
+        } else if (ratio < 0.7) {
+            onZoomOut?.();
+            setInitialPinchDist(dist); // Reset base distance
+        }
+     }
+  };
+
+  const handleTouchEnd = () => {
+    setIsPanning(false);
+    setInitialPinchDist(null);
   };
 
   // --- Task Drag Handlers (Resize/Move) ---
@@ -530,29 +618,33 @@ const GanttChart: React.FC<GanttChartProps> = ({
       <div 
         ref={containerRef}
         className={`flex-1 overflow-auto gantt-scroll relative select-none min-h-0 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+        style={{ touchAction: 'pan-y' }} // Allow vertical scroll, handle horizontal manually
         onMouseDown={handlePanMouseDown}
         onMouseUp={handlePanMouseUp}
         onMouseLeave={handlePanMouseLeave}
         onMouseMove={handlePanMouseMove}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
         {/* Increased bottom padding to prevent content from being hidden behind floating controls */}
-        <div style={{ width: SIDEBAR_WIDTH + totalWidth, minWidth: '100%' }} className="pb-48">
+        <div style={{ width: sidebarWidth + totalWidth, minWidth: '100%' }} className="pb-48">
             
             {/* Header Row */}
             {/* Increased Z-Index to 40 to sit above Sidebar Rows (30) but below Corner (50) */}
             <div className="flex sticky top-0 z-40 bg-[#F8F9FA] border-b border-[#E0E2E5]" style={{ height: HEADER_HEIGHT }}>
                 {/* Sortable Task Name Header - Highest Z-Index (50) to float above everything */}
                 <div 
-                  className="sticky left-0 z-50 bg-[#F8F9FA] border-r border-[#E0E2E5] flex items-center justify-between px-6 font-medium text-[#444746] text-sm shadow-[4px_0_8px_rgba(0,0,0,0.02)] cursor-pointer hover:bg-[#EEF2FF] hover:text-indigo-600 transition-colors group/header" 
-                  style={{ width: SIDEBAR_WIDTH, minWidth: SIDEBAR_WIDTH }}
+                  className="sticky left-0 z-50 bg-[#F8F9FA] border-r border-[#E0E2E5] flex items-center justify-between px-3 md:px-6 font-medium text-[#444746] text-xs md:text-sm shadow-[4px_0_8px_rgba(0,0,0,0.02)] cursor-pointer hover:bg-[#EEF2FF] hover:text-indigo-600 transition-colors group/header" 
+                  style={{ width: sidebarWidth, minWidth: sidebarWidth }}
                   onClick={toggleSort}
                   title={`按开始时间${sortOrder === 'asc' ? '升序' : sortOrder === 'desc' ? '降序' : '排序'}`}
                 >
                     <span>任务名称</span>
                     <div className="flex items-center text-[#5F6368] group-hover/header:text-indigo-600 transition-colors">
-                        {sortOrder === 'default' && <span className="material-symbols-outlined text-lg opacity-30">sort</span>}
-                        {sortOrder === 'asc' && <span className="material-symbols-outlined text-lg">arrow_upward</span>}
-                        {sortOrder === 'desc' && <span className="material-symbols-outlined text-lg">arrow_downward</span>}
+                        {sortOrder === 'default' && <span className="material-symbols-outlined text-base md:text-lg opacity-30">sort</span>}
+                        {sortOrder === 'asc' && <span className="material-symbols-outlined text-base md:text-lg">arrow_upward</span>}
+                        {sortOrder === 'desc' && <span className="material-symbols-outlined text-base md:text-lg">arrow_downward</span>}
                     </div>
                 </div>
                 <div className="flex relative h-full">
@@ -583,7 +675,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
             {/* Task Rows */}
             <div className="relative">
                 {/* Grid Lines - Lowest Z-Index (0) */}
-                <div className="absolute inset-0 flex pl-[240px] pointer-events-none h-full z-0">
+                <div className="absolute inset-0 flex pointer-events-none h-full z-0" style={{ paddingLeft: sidebarWidth }}>
                      {ticks.slice(0, ticks.length - 1).map((tick, i) => {
                          const nextTick = ticks[i+1];
                          const colWidth = getX(nextTick) - getX(tick);
@@ -598,7 +690,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
                 </div>
 
                 {/* SVG Layer for Dependency Lines - Z-Index 10 */}
-                <svg className="absolute top-0 bottom-0 pointer-events-none z-10" style={{ left: SIDEBAR_WIDTH, width: totalWidth, height: '100%' }}>
+                <svg className="absolute top-0 bottom-0 pointer-events-none z-10" style={{ left: sidebarWidth, width: totalWidth, height: '100%' }}>
                     <defs>
                         <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
                             <polygon points="0 0, 10 3.5, 0 7" fill="#6366F1" />
@@ -652,8 +744,8 @@ const GanttChart: React.FC<GanttChartProps> = ({
                             {/* Sticky Sidebar Cell */}
                             {/* Z-Index increased to 30 to sit above chart content (20) but below header (40) */}
                             <div 
-                              className={`sticky left-0 bg-white/85 backdrop-blur-sm group-hover/row:bg-[#F8F9FA]/85 border-r border-[#E0E2E5] flex flex-col justify-center px-6 shadow-[4px_0_8px_rgba(0,0,0,0.02)] transition-colors ${isEditing ? 'z-50' : 'z-30'} ${isNew ? '!bg-indigo-50/85' : ''}`} 
-                              style={{ width: SIDEBAR_WIDTH, minWidth: SIDEBAR_WIDTH }}
+                              className={`sticky left-0 bg-white/85 backdrop-blur-sm group-hover/row:bg-[#F8F9FA]/85 border-r border-[#E0E2E5] flex flex-col justify-center px-3 md:px-6 shadow-[4px_0_8px_rgba(0,0,0,0.02)] transition-colors ${isEditing ? 'z-50' : 'z-30'} ${isNew ? '!bg-indigo-50/85' : ''}`} 
+                              style={{ width: sidebarWidth, minWidth: sidebarWidth }}
                               draggable={!isNew && !readOnly && sortOrder === 'default'}
                               onDragStart={(e) => handleRowDragStart(e, index)}
                               onDragOver={(e) => handleRowDragOver(e, index)}
@@ -661,11 +753,11 @@ const GanttChart: React.FC<GanttChartProps> = ({
                               onMouseDown={(e) => e.stopPropagation()} // Allow editing inputs to work
                             >
                                 <div className="flex items-center justify-between w-full group-hover/row:translate-x-1 transition-transform">
-                                  <div className="flex items-center gap-2 min-w-0">
+                                  <div className="flex items-center gap-1 md:gap-2 min-w-0">
                                       {/* Drag Handle (Only visible when hovering, not sorting, and not readOnly) */}
                                       {!isNew && !readOnly && sortOrder === 'default' && (
                                         <span 
-                                            className="material-symbols-outlined text-[#9AA0A6] text-base cursor-grab active:cursor-grabbing opacity-0 group-hover/row:opacity-100 hover:text-[#5F6368] transition-opacity shrink-0" 
+                                            className="material-symbols-outlined text-[#9AA0A6] text-sm md:text-base cursor-grab active:cursor-grabbing opacity-0 group-hover/row:opacity-100 hover:text-[#5F6368] transition-opacity shrink-0 hidden md:block" 
                                             title="Drag to reorder"
                                         >
                                             drag_indicator
@@ -673,14 +765,29 @@ const GanttChart: React.FC<GanttChartProps> = ({
                                       )}
                                       
                                       {isNew && (
-                                          <span className="material-symbols-outlined text-[16px] text-indigo-600 animate-pulse shrink-0">auto_awesome</span>
+                                          <span className="material-symbols-outlined text-[14px] md:text-[16px] text-indigo-600 animate-pulse shrink-0">auto_awesome</span>
                                       )}
-                                      <div className={`text-sm font-medium line-clamp-2 leading-tight whitespace-normal break-words ${isNew ? 'text-indigo-700' : 'text-[#1F1F1F]'}`} title={task.name}>{task.name}</div>
+                                      <div className={`text-xs md:text-sm font-medium line-clamp-2 leading-tight whitespace-normal break-words ${isNew ? 'text-indigo-700' : 'text-[#1F1F1F]'}`} title={task.name}>{task.name}</div>
                                   </div>
                                   
                                   {/* Actions: Edit & Delete (Disabled for new tasks pending confirmation and readOnly mode) */}
                                   {!isNew && !readOnly && (
-                                      <div className="opacity-0 group-hover/row:opacity-100 flex items-center gap-1 bg-white/50 rounded-full px-1 backdrop-blur-sm transition-opacity ml-1">
+                                      <div className="opacity-0 group-hover/row:opacity-100 flex items-center gap-0.5 bg-white/90 rounded-full px-1 backdrop-blur-sm transition-opacity ml-auto mr-2 shadow-sm border border-gray-100 hidden md:flex">
+                                          <button 
+                                            onClick={() => onInsertTask?.(task.id, 'before')}
+                                            className="p-1 hover:bg-[#E0E2E5] rounded-full transition-all text-[#5F6368]"
+                                            title="在上方插入任务"
+                                          >
+                                            <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
+                                          </button>
+                                          <button 
+                                            onClick={() => onInsertTask?.(task.id, 'after')}
+                                            className="p-1 hover:bg-[#E0E2E5] rounded-full transition-all text-[#5F6368]"
+                                            title="在下方插入任务"
+                                          >
+                                            <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
+                                          </button>
+                                          <div className="w-px h-3 bg-gray-300 mx-1"></div>
                                           <button 
                                             onClick={() => startEditing(task)}
                                             className="p-1 hover:bg-[#E0E2E5] rounded-full transition-all text-[#5F6368]"
@@ -697,12 +804,21 @@ const GanttChart: React.FC<GanttChartProps> = ({
                                           </button>
                                       </div>
                                   )}
+                                  {/* Mobile Edit Trigger */}
+                                  {!isNew && !readOnly && (
+                                      <button 
+                                        onClick={() => startEditing(task)}
+                                        className="md:hidden text-[#9AA0A6]"
+                                      >
+                                          <span className="material-symbols-outlined text-[16px]">more_vert</span>
+                                      </button>
+                                  )}
                                 </div>
-                                <div className="flex items-center mt-1 pl-6">
-                                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold mr-2 ${isNew ? 'bg-white text-indigo-600 border border-indigo-200' : 'bg-indigo-100 text-indigo-700'}`}>
+                                <div className="flex items-center mt-1 pl-0 md:pl-6">
+                                    <div className={`w-4 h-4 md:w-5 md:h-5 rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold mr-1 md:mr-2 ${isNew ? 'bg-white text-indigo-600 border border-indigo-200' : 'bg-indigo-100 text-indigo-700'}`}>
                                         {task.assignee.charAt(0)}
                                     </div>
-                                    <div className={`text-xs ${isNew ? 'text-indigo-500' : 'text-[#5F6368]'}`}>{task.assignee}</div>
+                                    <div className={`text-[10px] md:text-xs ${isNew ? 'text-indigo-500' : 'text-[#5F6368]'}`}>{task.assignee}</div>
                                 </div>
                             </div>
 
@@ -713,7 +829,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
                                     onMouseDown={(e) => !isNew && !isEditing && handleTaskMouseDown(e, task)}
                                     onMouseEnter={() => setHoveredTaskId(task.id)}
                                     onMouseLeave={() => setHoveredTaskId(null)}
-                                    className={`absolute h-8 rounded-full shadow-sm border text-xs flex items-center px-3 truncate transition-all duration-150 select-none group/bar
+                                    className={`absolute h-6 md:h-8 rounded-full shadow-sm border text-[10px] md:text-xs flex items-center px-2 md:px-3 truncate transition-all duration-150 select-none group/bar
                                         ${isDraggingThis && dragState.mode === 'move' ? 'cursor-grabbing shadow-lg scale-[1.02] ring-2 ring-offset-2' : ''}
                                         ${!isDraggingThis && !readOnly ? 'cursor-grab' : 'cursor-default'}
                                         ${isDraggingThis && dragState.mode.startsWith('resize') ? 'cursor-ew-resize ring-2 ring-indigo-500 ring-offset-1' : ''}
@@ -779,7 +895,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
                                 {/* Proposed Change Bar (Ghost) */}
                                 {isChanging && proposed && (
                                     <div 
-                                        className="absolute h-8 rounded-full border-2 border-dashed border-amber-500 bg-amber-50/70 text-amber-800 text-xs flex items-center px-3 truncate animate-pulse z-0 pointer-events-none"
+                                        className="absolute h-6 md:h-8 rounded-full border-2 border-dashed border-amber-500 bg-amber-50/70 text-amber-800 text-[10px] md:text-xs flex items-center px-3 truncate animate-pulse z-0 pointer-events-none"
                                         style={{
                                             left: getX(proposed.newStartDate),
                                             width: getWidth(proposed.newStartDate, proposed.newEndDate)
@@ -800,7 +916,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
       {editingTaskId && !readOnly && createPortal(
           <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/20 backdrop-blur-sm" onClick={cancelEditing}>
               <div 
-                  className="bg-white rounded-xl shadow-2xl p-6 w-[360px] animate-in fade-in zoom-in-95 duration-200 relative" 
+                  className="bg-white rounded-xl shadow-2xl p-6 w-[90vw] md:w-[360px] animate-in fade-in zoom-in-95 duration-200 relative" 
                   onClick={e => e.stopPropagation()}
               >
                   <div className="flex items-center justify-between mb-4">
@@ -811,6 +927,24 @@ const GanttChart: React.FC<GanttChartProps> = ({
                   </div>
                   
                   <div className="space-y-4">
+                      {/* Add Task Actions (Mobile/Modal) */}
+                      <div className="grid grid-cols-2 gap-2 mb-2">
+                          <button 
+                             onClick={() => { onInsertTask?.(editingTaskId, 'before'); cancelEditing(); }}
+                             className="py-2 text-xs font-medium text-[#1F1F1F] bg-[#F1F3F4] hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-colors flex items-center justify-center gap-1"
+                          >
+                              <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
+                              在上方插入
+                          </button>
+                          <button 
+                             onClick={() => { onInsertTask?.(editingTaskId, 'after'); cancelEditing(); }}
+                             className="py-2 text-xs font-medium text-[#1F1F1F] bg-[#F1F3F4] hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-colors flex items-center justify-center gap-1"
+                          >
+                              <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
+                              在下方插入
+                          </button>
+                      </div>
+
                       {/* Task Name - High Contrast */}
                       <div className="relative group">
                           <input 
@@ -914,6 +1048,17 @@ const GanttChart: React.FC<GanttChartProps> = ({
                               保存
                           </button>
                       </div>
+                      
+                      {/* Mobile Delete Button (Extra) */}
+                      <div className="mt-2 border-t pt-2 md:hidden">
+                           <button 
+                              onClick={() => { cancelEditing(); setDeletingTask(allTasks.find(t => t.id === editingTaskId)!); }}
+                              className="w-full py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors flex items-center justify-center gap-1"
+                          >
+                              <span className="material-symbols-outlined text-[16px]">delete</span>
+                              删除此任务
+                          </button>
+                      </div>
                   </div>
               </div>
           </div>,
@@ -924,7 +1069,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
       {deletingTask && !readOnly && createPortal(
           <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setDeletingTask(null)}>
               <div 
-                  className="bg-white rounded-xl shadow-2xl p-6 w-[320px] animate-in fade-in zoom-in-95 duration-200"
+                  className="bg-white rounded-xl shadow-2xl p-6 w-[90vw] md:w-[320px] animate-in fade-in zoom-in-95 duration-200"
                   onClick={e => e.stopPropagation()}
               >
                   <div className="h-10 w-10 rounded-full bg-red-50 flex items-center justify-center mb-4 text-red-600">

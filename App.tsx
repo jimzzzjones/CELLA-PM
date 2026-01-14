@@ -6,6 +6,7 @@ import RiskDashboard from './components/RiskDashboard';
 import ConflictModal from './components/ConflictModal';
 import ProjectSidebar from './components/ProjectSidebar';
 import RiskSummaryModal from './components/RiskSummaryModal';
+import SettingsModal from './components/SettingsModal';
 import { Project, Task, ChatMessage, ProposedChange, RiskLevel, TaskStatus, ViewMode, ScenarioType, User, UserRole, AIConfig, AI_PROVIDERS_CONFIG } from './types';
 import { INITIAL_SCENARIOS } from './constants';
 import { analyzeProjectUpdate } from './services/geminiService';
@@ -76,14 +77,6 @@ const App: React.FC = () => {
   const [allProjects, setAllProjects] = useState<Project[]>([INITIAL_SCENARIOS.equipment]);
   const [project, setProject] = useState<Project>(INITIAL_SCENARIOS.equipment);
   
-  // User Management State (With Initial Credentials)
-  const [users, setUsers] = useState<User[]>([
-    { id: 'u1', name: '张总', account: 'zhang', password: '123', role: UserRole.Admin, avatar: '张' },
-    { id: 'u2', name: '李经理', account: 'li', password: '123', role: UserRole.ProjectManager, avatar: '李' },
-    { id: 'u3', name: '王工', account: 'wang', password: '123', role: UserRole.Observer, avatar: '王' },
-    { id: 'u4', name: '赵专员', account: 'zhao', password: '123', role: UserRole.ProjectManager, avatar: '赵' }
-  ]);
-
   // AI Configuration State
   const [aiConfig, setAiConfig] = useState<AIConfig>({
       provider: 'google',
@@ -92,19 +85,26 @@ const App: React.FC = () => {
       baseUrl: ''
   });
 
-  // Current Logged In User State (Simulating Login)
-  const [currentUser, setCurrentUser] = useState<User>(users[0]); // Default to first user (Admin)
+  // Simplified User State (Single Admin User)
+  const [currentUser] = useState<User>({
+      id: 'admin',
+      name: '管理员',
+      role: UserRole.Admin,
+      avatar: 'Admin'
+  });
 
-  // Permissions based on Role
-  // CHANGED: Project Managers can now manage projects (Create/Import/Rename)
-  const canManageProjects = currentUser.role === UserRole.Admin || currentUser.role === UserRole.ProjectManager;
-  const canEditTasks = currentUser.role === UserRole.Admin || currentUser.role === UserRole.ProjectManager;
+  // Permissions based on Role (Always Admin now)
+  const canManageProjects = currentUser.role === UserRole.Admin;
+  const canEditTasks = currentUser.role === UserRole.Admin;
   
   // Project Sidebar State
   const [isProjectDrawerOpen, setIsProjectDrawerOpen] = useState(false);
 
   // Risk Modal State
   const [isRiskModalOpen, setIsRiskModalOpen] = useState(false);
+
+  // Settings Modal State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -127,11 +127,9 @@ const App: React.FC = () => {
   // Add Menu State
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isGroupByMenuOpen, setIsGroupByMenuOpen] = useState(false); // For Kanban dropdown
-  const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false); // Role Switcher
   
   const addMenuRef = useRef<HTMLDivElement>(null);
   const groupByMenuRef = useRef<HTMLDivElement>(null);
-  const roleMenuRef = useRef<HTMLDivElement>(null);
 
   // Conflict Handling State
   const [conflict, setConflict] = useState<{
@@ -150,9 +148,6 @@ const App: React.FC = () => {
       if (groupByMenuRef.current && !groupByMenuRef.current.contains(event.target as Node)) {
         setIsGroupByMenuOpen(false);
       }
-      if (roleMenuRef.current && !roleMenuRef.current.contains(event.target as Node)) {
-        setIsRoleMenuOpen(false);
-      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -169,23 +164,6 @@ const App: React.FC = () => {
     if (viewMode === 'Day') setViewMode('Week');
     else if (viewMode === 'Week') setViewMode('Month');
     else if (viewMode === 'Month') setViewMode('Quarter');
-  };
-
-  // --- User Management Logic ---
-  const handleAddUser = (user: User) => {
-    setUsers(prev => [...prev, user]);
-  };
-
-  const handleUpdateUser = (updatedUser: User) => {
-    setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
-    // If updating current user, update session state too
-    if (currentUser.id === updatedUser.id) {
-        setCurrentUser(updatedUser);
-    }
-  };
-
-  const handleDeleteUser = (userId: string) => {
-    setUsers(prev => prev.filter(u => u.id !== userId));
   };
 
 
@@ -572,6 +550,40 @@ const App: React.FC = () => {
     });
   };
 
+  // Handle Insert Task (Before/After)
+  const handleInsertTask = (targetTaskId: string, position: 'before' | 'after') => {
+    if (!canEditTasks) return;
+
+    setProject(prev => {
+        const tasks = [...prev.tasks];
+        const index = tasks.findIndex(t => t.id === targetTaskId);
+        if (index === -1) return prev;
+
+        const targetTask = tasks[index];
+        const newTask: Task = {
+            id: `task_${Date.now()}`,
+            name: "新任务",
+            startDate: targetTask.startDate,
+            endDate: targetTask.endDate, // Default to same duration/dates
+            duration: targetTask.duration,
+            status: TaskStatus.Pending,
+            assignee: "未分配",
+            progress: 0,
+            dependencies: [],
+            gmpCritical: false,
+            category: "General",
+            isNew: true
+        };
+
+        const insertIndex = position === 'after' ? index + 1 : index;
+        tasks.splice(insertIndex, 0, newTask);
+
+        const newProjectState = { ...prev, tasks };
+        saveCurrentProjectToStorage(newProjectState);
+        return newProjectState;
+    });
+  };
+
   // Resolve conflict by applying suggestions
   const resolveConflict = () => {
     if (pendingTaskUpdate && conflict && canEditTasks) {
@@ -704,14 +716,6 @@ const App: React.FC = () => {
     setIsAddMenuOpen(false);
   };
 
-  // Switch Role Helper
-  const switchRole = (userId: string) => {
-    const selectedUser = users.find(u => u.id === userId);
-    if (selectedUser) {
-        setCurrentUser(selectedUser);
-    }
-    setIsRoleMenuOpen(false);
-  };
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-[#F8F9FA]">
@@ -728,11 +732,12 @@ const App: React.FC = () => {
         onImportProject={handleImportProject}
         onExportProject={handleExportProject}
         userRole={currentUser.role}
-        users={users}
-        currentUserId={currentUser.id}
-        onAddUser={handleAddUser}
-        onUpdateUser={handleUpdateUser}
-        onDeleteUser={handleDeleteUser}
+      />
+
+      {/* AI Settings Modal */}
+      <SettingsModal 
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
         aiConfig={aiConfig}
         onUpdateAiConfig={setAiConfig}
       />
@@ -756,117 +761,88 @@ const App: React.FC = () => {
         project={project}
       />
 
-      {/* Top App Bar (Material 3 Style) */}
-      <header className="h-16 bg-white flex items-center justify-between px-6 shrink-0 z-50 shadow-sm relative">
-        <div className="flex items-center space-x-4">
-            <div className="h-10 w-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-md">
-                <span className="material-symbols-outlined text-white">science</span>
+      {/* Top App Bar (Material 3 Style) - Responsive adjustments */}
+      <header className="h-16 bg-white flex items-center justify-between px-4 md:px-6 shrink-0 z-50 shadow-sm relative">
+        <div className="flex items-center space-x-2 md:space-x-4">
+            <div className="h-8 w-8 md:h-10 md:w-10 bg-indigo-600 rounded-lg md:rounded-xl flex items-center justify-center shadow-md">
+                <span className="material-symbols-outlined text-white text-[20px] md:text-[24px]">science</span>
             </div>
             <div>
-                <h1 className="text-xl font-medium text-[#1F1F1F]">CELLA</h1>
-                <p className="text-xs text-[#5F6368]">GMP 项目智能助手</p>
+                <h1 className="text-lg md:text-xl font-medium text-[#1F1F1F]">CELLA</h1>
+                <p className="text-[10px] md:text-xs text-[#5F6368] hidden md:block">GMP 项目智能助手</p>
             </div>
         </div>
         
-        <div className="flex items-center space-x-6">
+        <div className="flex items-center space-x-2 md:space-x-6">
+            {/* Project Selector - Optimized for mobile */}
             <div 
-                className="text-right hidden md:block cursor-pointer hover:bg-[#F8F9FA] px-3 py-1 rounded-lg transition-colors group"
+                className="cursor-pointer hover:bg-[#F8F9FA] px-2 md:px-3 py-1 rounded-lg transition-colors group flex items-center"
                 onClick={() => setIsProjectDrawerOpen(true)}
             >
-                <div className="flex items-center justify-end gap-1">
-                    <div className="text-xs font-medium text-[#5F6368]">当前项目</div>
-                    <span className="material-symbols-outlined text-[14px] text-[#9AA0A6] group-hover:text-indigo-600">expand_more</span>
+                <div className="flex flex-col items-end mr-1">
+                    <div className="text-[10px] font-medium text-[#5F6368] hidden md:block">当前项目</div>
+                    <div className="text-sm font-medium text-[#1F1F1F] group-hover:text-indigo-600 transition-colors max-w-[120px] md:max-w-[200px] truncate">{project.name}</div>
                 </div>
-                <div className="text-sm font-medium text-[#1F1F1F] group-hover:text-indigo-600 transition-colors">{project.name}</div>
+                <span className="material-symbols-outlined text-[20px] text-[#9AA0A6] group-hover:text-indigo-600">expand_more</span>
             </div>
+
             <RiskDashboard 
                 level={project.riskLevel} 
                 onClick={() => setIsRiskModalOpen(true)}
             />
             
-            {/* User Profile & Role Switcher */}
-            <div className="relative" ref={roleMenuRef}>
-                <button 
-                  onClick={() => setIsRoleMenuOpen(!isRoleMenuOpen)}
-                  className="flex items-center gap-2 hover:bg-[#F8F9FA] pl-2 pr-3 py-1 rounded-full border border-transparent hover:border-[#E0E2E5] transition-all"
-                >
-                   <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-sm ${
-                      currentUser.role === UserRole.Admin ? 'bg-indigo-600' :
-                      currentUser.role === UserRole.ProjectManager ? 'bg-amber-600' : 'bg-emerald-600'
-                   }`}>
-                      {currentUser.name.charAt(0)}
-                   </div>
-                   <div className="text-left hidden lg:block">
-                      <div className="text-sm font-medium text-[#1F1F1F] leading-tight">{currentUser.name}</div>
-                      <div className="text-[10px] text-[#5F6368] font-medium leading-tight">{currentUser.role}</div>
-                   </div>
-                   <span className="material-symbols-outlined text-[#5F6368] text-[18px]">arrow_drop_down</span>
-                </button>
-
-                {isRoleMenuOpen && (
-                  <div className="absolute top-12 right-0 w-48 bg-white rounded-xl shadow-xl border border-[#E0E2E5] py-2 z-50 animate-in fade-in zoom-in-95 duration-100 flex flex-col">
-                      <div className="px-4 py-2 text-[10px] font-bold text-[#5F6368] uppercase tracking-wider border-b border-[#F1F3F4] mb-1">切换用户 (模拟登录)</div>
-                      
-                      {users.map(u => (
-                         <button 
-                              key={u.id}
-                              onClick={() => switchRole(u.id)}
-                              className={`px-4 py-2 text-left text-sm flex items-center gap-2 ${currentUser.id === u.id ? 'bg-indigo-50 text-indigo-600' : 'hover:bg-[#F1F3F4] text-[#1F1F1F]'}`}
-                          >
-                              <span className={`w-2 h-2 rounded-full ${
-                                u.role === UserRole.Admin ? 'bg-indigo-500' :
-                                u.role === UserRole.ProjectManager ? 'bg-amber-500' : 'bg-emerald-500'
-                              }`}></span>
-                              <span>{u.name}</span>
-                              <span className="text-xs text-gray-400 ml-auto">{u.role === UserRole.Admin ? 'Admin' : u.role === UserRole.ProjectManager ? 'PM' : 'Obs'}</span>
-                          </button>
-                      ))}
-                  </div>
-                )}
-            </div>
+            {/* AI Settings Button */}
+            <button 
+                onClick={() => setIsSettingsOpen(true)}
+                className="flex items-center justify-center w-8 h-8 md:w-10 md:h-10 rounded-full hover:bg-[#F1F3F4] text-[#5F6368] transition-colors border border-transparent hover:border-[#E0E2E5]"
+                title="AI 模型设置"
+            >
+                <span className="material-symbols-outlined text-[20px] md:text-[24px]">psychology</span>
+            </button>
         </div>
       </header>
 
       {/* Main Content: Full Screen Gantt/Kanban + Floating Chat */}
-      <main className="flex-1 flex flex-col min-h-0 bg-[#F8F9FA] p-4 relative">
+      <main className="flex-1 flex flex-col min-h-0 bg-[#F8F9FA] p-0 md:p-4 relative">
         
         {/* Full Screen Visualization Container */}
         <div 
-          className="flex-1 flex flex-col min-h-0 bg-white rounded-3xl shadow-sm border border-[#E0E2E5] transition-all overflow-hidden"
+          className="flex-1 flex flex-col min-h-0 bg-white md:rounded-3xl shadow-sm border-t md:border border-[#E0E2E5] transition-all overflow-hidden"
           onClick={() => setIsChatExpanded(false)} // Click outside to collapse chat
         >
-            <div className="px-6 py-5 flex items-center justify-between shrink-0 border-b border-[#E0E2E5]">
-                <h2 className="text-xl font-normal text-[#1F1F1F] flex items-center">
+            <div className="px-4 md:px-6 py-3 md:py-5 flex flex-wrap gap-2 items-center justify-between shrink-0 border-b border-[#E0E2E5]">
+                <h2 className="text-lg md:text-xl font-normal text-[#1F1F1F] flex items-center mr-auto">
                     <span className="material-symbols-outlined mr-2 text-indigo-600">
                         {currentView === 'gantt' ? 'calendar_month' : 'view_kanban'}
                     </span>
-                    {currentView === 'gantt' ? '主进度计划' : '任务看板'}
+                    <span className="hidden md:inline">{currentView === 'gantt' ? '主进度计划' : '任务看板'}</span>
                 </h2>
-                <div className="flex items-center space-x-3">
-                     {/* Gantt Export Button - Allowed for all Roles */}
+                
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                     {/* Gantt Export Button - Hidden on small mobile */}
                      <button 
                         onClick={handleExportGanttCsv}
-                        className="h-10 px-4 bg-white border border-[#E0E2E5] hover:bg-[#F1F3F4] text-[#1F1F1F] rounded-full text-sm font-medium transition-all flex items-center gap-2"
+                        className="h-8 md:h-10 px-3 md:px-4 bg-white border border-[#E0E2E5] hover:bg-[#F1F3F4] text-[#1F1F1F] rounded-full text-xs md:text-sm font-medium transition-all hidden sm:flex items-center gap-2"
                         title="导出当前进度表 (CSV)"
                      >
-                        <span className="material-symbols-outlined text-[20px] text-[#5F6368]">ios_share</span>
-                        导出 CSV
+                        <span className="material-symbols-outlined text-[16px] md:text-[20px] text-[#5F6368]">ios_share</span>
+                        <span className="hidden md:inline">导出 CSV</span>
                      </button>
 
-                     {/* Add Module Dropdown - Hidden for Observers */}
+                     {/* Add Module Dropdown */}
                      {canEditTasks && (
                        <div className="relative" ref={addMenuRef}>
                            <button 
                              onClick={(e) => { e.stopPropagation(); setIsAddMenuOpen(!isAddMenuOpen); }}
-                             className="h-10 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-sm font-medium shadow-md hover:shadow-lg transition-all flex items-center gap-2 active:scale-95"
+                             className="h-8 md:h-10 px-3 md:px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-xs md:text-sm font-medium shadow-md hover:shadow-lg transition-all flex items-center gap-1 md:gap-2 active:scale-95"
                            >
-                             <span className="material-symbols-outlined text-[20px]">add</span>
-                             新增模块
+                             <span className="material-symbols-outlined text-[16px] md:text-[20px]">add</span>
+                             <span className="hidden xs:inline">新增模块</span>
                              <span className="material-symbols-outlined text-[16px] ml-1">arrow_drop_down</span>
                            </button>
                            
                            {isAddMenuOpen && (
-                               <div className="absolute top-12 left-0 w-48 bg-white rounded-xl shadow-xl border border-[#E0E2E5] py-2 z-50 animate-in fade-in zoom-in-95 duration-100 flex flex-col">
+                               <div className="absolute top-12 right-0 md:left-0 w-48 bg-white rounded-xl shadow-xl border border-[#E0E2E5] py-2 z-50 animate-in fade-in zoom-in-95 duration-100 flex flex-col">
                                    <button 
                                        onClick={() => handleAddModule('equipment')}
                                        className="px-4 py-3 text-left hover:bg-[#F1F3F4] flex items-center gap-3 text-sm text-[#1F1F1F]"
@@ -897,14 +873,6 @@ const App: React.FC = () => {
                                            <div className="text-[10px] text-[#5F6368]">含审计, 方法转移, PPQ</div>
                                        </div>
                                    </button>
-                                   <div className="h-px bg-[#E0E2E5] my-1"></div>
-                                   <button 
-                                       onClick={() => handleAddModule('general')}
-                                       className="px-4 py-3 text-left hover:bg-[#F1F3F4] flex items-center gap-3 text-sm text-[#1F1F1F]"
-                                   >
-                                       <span className="material-symbols-outlined text-[#5F6368]">check_box_outline_blank</span>
-                                       单个通用任务
-                                   </button>
                                </div>
                            )}
                        </div>
@@ -915,10 +883,10 @@ const App: React.FC = () => {
                         <div className="relative" ref={groupByMenuRef}>
                             <button
                                 onClick={() => setIsGroupByMenuOpen(!isGroupByMenuOpen)}
-                                className="h-10 px-4 bg-white border border-[#E0E2E5] hover:bg-[#F1F3F4] text-[#1F1F1F] rounded-full text-sm font-medium transition-all flex items-center gap-2"
+                                className="h-8 md:h-10 px-3 md:px-4 bg-white border border-[#E0E2E5] hover:bg-[#F1F3F4] text-[#1F1F1F] rounded-full text-xs md:text-sm font-medium transition-all flex items-center gap-2"
                             >
-                                <span className="material-symbols-outlined text-[20px] text-[#5F6368]">group_work</span>
-                                {kanbanGroupBy === 'status' ? '按状态' : '按负责人'}
+                                <span className="material-symbols-outlined text-[16px] md:text-[20px] text-[#5F6368]">group_work</span>
+                                <span className="hidden xs:inline">{kanbanGroupBy === 'status' ? '按状态' : '按负责人'}</span>
                                 <span className="material-symbols-outlined text-[16px] ml-1">arrow_drop_down</span>
                             </button>
                             {isGroupByMenuOpen && (
@@ -943,16 +911,16 @@ const App: React.FC = () => {
                      )}
 
                      {/* View Switcher */}
-                     <div className="h-10 bg-[#F1F3F4] rounded-full p-1 flex">
+                     <div className="h-8 md:h-10 bg-[#F1F3F4] rounded-full p-1 flex">
                         <button 
                             onClick={() => setCurrentView('gantt')}
-                            className={`px-4 rounded-full text-sm font-medium transition-all ${currentView === 'gantt' ? 'bg-white text-[#1F1F1F] shadow-sm' : 'text-[#5F6368] hover:text-[#1F1F1F]'}`}
+                            className={`px-3 md:px-4 rounded-full text-xs md:text-sm font-medium transition-all ${currentView === 'gantt' ? 'bg-white text-[#1F1F1F] shadow-sm' : 'text-[#5F6368] hover:text-[#1F1F1F]'}`}
                         >
                             甘特图
                         </button>
                         <button 
                             onClick={() => setCurrentView('kanban')}
-                            className={`px-4 rounded-full text-sm font-medium transition-all ${currentView === 'kanban' ? 'bg-white text-[#1F1F1F] shadow-sm' : 'text-[#5F6368] hover:text-[#1F1F1F]'}`}
+                            className={`px-3 md:px-4 rounded-full text-xs md:text-sm font-medium transition-all ${currentView === 'kanban' ? 'bg-white text-[#1F1F1F] shadow-sm' : 'text-[#5F6368] hover:text-[#1F1F1F]'}`}
                         >
                             看板
                         </button>
@@ -971,6 +939,9 @@ const App: React.FC = () => {
                         onTaskDelete={handleTaskDelete}
                         viewMode={viewMode}
                         readOnly={!canEditTasks}
+                        onZoomIn={handleZoomIn}
+                        onZoomOut={handleZoomOut}
+                        onInsertTask={handleInsertTask}
                     />
                 ) : (
                     <KanbanBoard 
@@ -985,12 +956,14 @@ const App: React.FC = () => {
 
         {/* Floating View Controls & Legend (Left Side) - Only Visible in Gantt Mode */}
         {currentView === 'gantt' && (
-            <div className="absolute left-6 bottom-6 z-[60] h-[92px] w-[320px] bg-white rounded-3xl shadow-2xl border border-[#E0E2E5] flex flex-col justify-between px-4 py-0 transition-all select-none animate-in fade-in slide-in-from-bottom-4">
+            <div className="absolute left-4 bottom-20 md:left-6 md:bottom-6 z-[60] h-auto md:h-[92px] w-auto md:w-[320px] flex flex-col gap-2 md:gap-0 md:justify-between transition-all select-none animate-in fade-in slide-in-from-bottom-4 pointer-events-none md:pointer-events-auto">
+                 {/* Desktop Container Style applied via children pointer-events */}
+                 
                 {/* Row 1: View Label & Zoom Controls */}
-                <div className="h-10 flex items-center justify-between shrink-0">
-                    <div className="flex items-center text-indigo-600 cursor-default -ml-2 px-2 py-1">
-                        <span className="material-symbols-outlined text-[22px] mr-2">calendar_month</span>
-                        <span className="font-bold text-sm">
+                <div className="h-10 flex items-center justify-between shrink-0 bg-white/90 backdrop-blur-sm md:bg-white rounded-full md:rounded-3xl shadow-lg border border-[#E0E2E5] px-2 md:px-4 pointer-events-auto w-fit md:w-full">
+                    <div className="flex items-center text-indigo-600 cursor-default px-2 py-1">
+                        <span className="material-symbols-outlined text-[20px] md:text-[22px] mr-2">calendar_month</span>
+                        <span className="font-bold text-xs md:text-sm whitespace-nowrap">
                             {viewMode === 'Day' && '日视图'}
                             {viewMode === 'Week' && '周视图'}
                             {viewMode === 'Month' && '月视图'}
@@ -998,7 +971,7 @@ const App: React.FC = () => {
                         </span>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 ml-2">
                         <button 
                             onClick={handleZoomOut}
                             disabled={viewMode === 'Quarter'}
@@ -1018,8 +991,8 @@ const App: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Row 2: Legend (Styled as Grey Capsule) */}
-                <div className="h-10 shrink-0 flex items-center bg-[#F1F3F4] rounded-full px-4 justify-between gap-4 text-[11px] font-medium text-[#444746] cursor-default">
+                {/* Row 2: Legend (Styled as Grey Capsule) - Hidden on very small screens or made compact */}
+                <div className="hidden md:flex h-10 shrink-0 items-center bg-[#F1F3F4] rounded-full px-4 justify-between gap-4 text-[11px] font-medium text-[#444746] cursor-default pointer-events-auto shadow-sm border border-[#E0E2E5] md:border-none md:shadow-none">
                     <div className="flex items-center whitespace-nowrap">
                         <div className="w-2.5 h-2.5 bg-[#C4EED0] border border-[#6DD58C] rounded-full mr-1.5 shadow-sm"></div>
                         <span>GMP 关键</span>
@@ -1042,7 +1015,12 @@ const App: React.FC = () => {
 
         {/* Floating Chat Command Center (Right Side) */}
         <div 
-            className={`absolute right-6 bottom-6 w-[400px] transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)] shadow-2xl rounded-3xl border border-[#E0E2E5] bg-white overflow-hidden flex flex-col z-[60] ${isChatExpanded ? 'h-[80%] max-h-[800px]' : 'h-auto'}`}
+            className={`
+                transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)] shadow-2xl border border-[#E0E2E5] bg-white overflow-hidden flex flex-col z-[60]
+                ${isChatExpanded 
+                   ? 'absolute left-0 right-0 bottom-0 h-full md:left-auto md:top-auto md:right-6 md:bottom-6 md:h-[80%] md:w-[400px] md:max-h-[800px] md:rounded-3xl rounded-none' 
+                   : 'absolute right-4 bottom-4 left-4 h-[92px] md:left-auto md:top-auto md:right-6 md:bottom-6 md:h-[92px] md:w-[400px] rounded-3xl'}
+            `}
             onClick={(e) => e.stopPropagation()}
         >
             <ChatInterface 
